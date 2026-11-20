@@ -146,6 +146,7 @@
     <div class="brand" style="font-size:1.4rem"><span class="mic">🎤</span> Karaoke Queue</div>
     <h1>Big screen</h1>
     <p class="muted">Put this on the TV and click start. Guests can scan the QR code now to start adding songs. Each song plays when the last one ends.</p>
+    <input id="startPw" type="password" placeholder="Party password (for fast song search)" autocomplete="current-password" style="max-width:22rem;text-align:center">
     <button class="btn big" id="startBtn">Start the party</button>
     <span class="status connecting" id="startStatus">Opening room…</span>
   </div>
@@ -240,9 +241,12 @@
 <dialog id="settingsDlg">
   <form method="dialog" id="settingsForm">
     <h3>Settings</h3>
-    <label for="sKey">YouTube API key (optional)</label>
+    <label for="sPw">Party password</label>
+    <input id="sPw" type="password" placeholder="Unlocks fast, reliable song search" autocomplete="current-password">
+    <div class="help" id="pwStatus">The password lets this screen use your private song search. You only need to enter it once on this computer.</div>
+    <label for="sKey">YouTube API key (advanced, optional)</label>
     <input id="sKey" type="password" placeholder="Leave empty to use pasted links only" autocomplete="off">
-    <div class="help">Guests just type a song name; the TV finds a karaoke video when it's their turn. Without a key it uses free public search services, which can be slow or down. A key makes finding videos fast and reliable. Get a free key from the <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">Google Cloud console</a> (enable "YouTube Data API v3", then create an API key). The key stays in this browser only. The free tier is about 100 searches a day.</div>
+    <div class="help">Only needed if you don't use the party password. The key stays in this browser only. Get a free key from the <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">Google Cloud console</a> (enable "YouTube Data API v3", then create an API key). The key stays in this browser only. The free tier is about 100 searches a day.</div>
     <label class="check"><input type="checkbox" id="sKaraoke"> Add "karaoke" to guest searches</label>
     <label for="sInter">Countdown between songs (seconds)</label>
     <input id="sInter" type="number" min="0" max="60">
@@ -265,7 +269,9 @@
   const { LS, esc, clean, toast } = KQ;
 
   // ---------- State ----------
-  const settings = Object.assign({ apiKey: '', intermission: 10, addKaraoke: true }, LS.get('kq-settings', {}));
+  const settings = Object.assign({ apiKey: '', partyPassword: '', intermission: 10, addKaraoke: true }, LS.get('kq-settings', {}));
+  // Password-protected search proxy (Cloudflare Worker that holds the YouTube key).
+  const SEARCH_WORKER = 'https://karaoke-search.jrqbuquealt.workers.dev/search';
   let queue = LS.get('kq-queue', []);
   { const prev = LS.get('kq-now', null); if (prev) queue.unshift(prev); } // song interrupted by a reload goes back to the front
   let now = null;
@@ -464,10 +470,40 @@
     throw new Error('No search service answered');
   }
 
+  const decodeEntities = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
+
+  // Ask the password-protected Worker. Returns items, or throws (err.wrongPassword on 401).
+  async function workerSearch(q) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 10000);
+    try {
+      const r = await fetch(SEARCH_WORKER + '?q=' + encodeURIComponent(q), { headers: { 'X-Party-Password': settings.partyPassword }, signal: c.signal });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { const e = new Error('Wrong party password'); e.wrongPassword = true; throw e; }
+      if (!r.ok) throw new Error(j.error || 'Search failed (' + r.status + ')');
+      return (j.items || []).map(x => ({ ...x, title: decodeEntities(x.title || ''), channel: decodeEntities(x.channel || '') }));
+    } finally { clearTimeout(t); }
+  }
+
+  // true = password works, false = wrong password, null = couldn't reach the Worker.
+  async function checkPartyPassword() {
+    if (!settings.partyPassword) return false;
+    try { await workerSearch(''); return true; }
+    catch (e) { return e.wrongPassword ? false : null; }
+  }
+
+  let warnedPassword = false;
   async function findCandidates(q) {
     const query = /karaoke/i.test(q) ? q : q + ' karaoke';
     let list = [];
-    if (settings.apiKey) { try { list = await search(query); } catch (e) { console.warn(e); } }
+    if (settings.partyPassword) {
+      try { list = await workerSearch(query); }
+      catch (e) {
+        console.warn(e);
+        if (e.wrongPassword && !warnedPassword) { warnedPassword = true; toast('The party password is wrong, so song search is using the slower backup. Fix it in ⚙ Settings.', 8000); }
+      }
+    }
+    if (!list.length && settings.apiKey) { try { list = await search(query); } catch (e) { console.warn(e); } }
     if (!list.length) list = await freeSearch(query);
     return list
       .filter(r => !BLOCKED_CHANNELS.test(r.channel) && !BLOCKED_CHANNELS.test(r.title))
@@ -687,7 +723,14 @@
   }
 
   // ---------- Host controls ----------
+  if (settings.partyPassword) $('#startPw').classList.add('hidden');
   $('#startBtn').onclick = () => {
+    const pw = $('#startPw').value.trim();
+    if (pw) { settings.partyPassword = pw; LS.set('kq-settings', settings); }
+    if (settings.partyPassword) checkPartyPassword().then(ok => {
+      if (ok === true) toast('⚡ Fast song search is on');
+      else if (ok === false) toast('That party password is wrong. Song search will use the slower backup. Fix it in ⚙ Settings.', 8000);
+    });
     started = true;
     document.documentElement.requestFullscreen?.().catch(() => {});
     if (queue.length && phase === 'idle') playNext(); else changed();
@@ -736,12 +779,17 @@
   // Settings
   $('#settingsBtn').onclick = () => {
     $('#sKey').value = settings.apiKey;
+    $('#sPw').value = settings.partyPassword;
+    showPwStatus();
     $('#sInter').value = settings.intermission;
     $('#sKaraoke').checked = settings.addKaraoke;
     $('#settingsDlg').showModal();
   };
   $('#settingsForm').onsubmit = () => {
     settings.apiKey = $('#sKey').value.trim();
+    const pwChanged = settings.partyPassword !== $('#sPw').value.trim();
+    settings.partyPassword = $('#sPw').value.trim();
+    if (pwChanged) { warnedPassword = false; if (settings.partyPassword) checkPartyPassword().then(ok => toast(ok === true ? '⚡ Party password works. Fast song search is on.' : ok === false ? "That party password is wrong." : "Couldn't reach the song search right now.", 6000)); }
     settings.intermission = Math.max(0, Math.min(60, parseInt($('#sInter').value, 10) || 0));
     settings.addKaraoke = $('#sKaraoke').checked;
     LS.set('kq-settings', settings);
@@ -749,6 +797,14 @@
     changed();
     toast('Settings saved');
   };
+  async function showPwStatus() {
+    const el = $('#pwStatus');
+    if (!settings.partyPassword) { el.textContent = 'Enter the party password to turn on fast, reliable song search. You only need to do this once on this computer.'; return; }
+    el.textContent = 'Checking…';
+    const ok = await checkPartyPassword();
+    el.textContent = ok === true ? '✓ Working. Fast song search is on.' : ok === false ? '✗ That password is wrong.' : "Couldn't reach the song search right now. It'll keep trying.";
+  }
+
   $('#newRoomBtn').onclick = () => {
     if (!confirm('Make a new room code? Connected phones will need to scan the new QR code.')) return;
     room = KQ.newCode(); LS.set('kq-room', room);

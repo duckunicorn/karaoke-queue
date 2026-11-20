@@ -26,13 +26,14 @@ A karaoke queue for parties that needs no server. Put `index.html` on the TV. Gu
 
 **⚙ Settings** has the countdown length, the YouTube API key, a new room code option and a "clear queue" button.
 
-## Recommended: add a YouTube API key
-Without a key, the TV finds videos through free public YouTube search mirrors. They work, but they can be slow or go down. A free key makes finding videos fast and reliable:
-1. Go to the [Google Cloud console](https://console.cloud.google.com/), create a project, and enable **YouTube Data API v3**.
-2. Under **Credentials**, choose **Create credentials → API key**. It's best to restrict the key to the YouTube Data API.
-3. On the big screen, open **⚙ Settings** and paste the key. It's stored only in that browser.
+## Fast song search with a party password
+The TV can search YouTube through a private Cloudflare Worker (`worker.js`, deployed as **karaoke-search**). The Worker holds the YouTube API key as a secret, so the key never reaches a browser. The TV only needs the **party password**: type it once on the start screen, or under ⚙ Settings. The browser remembers it, and its password manager can save and fill it.
 
-The free quota allows roughly 100 song lookups a day.
+To set up the Worker: in Cloudflare open **Workers & Pages → karaoke-search → Settings → Variables and Secrets** and add two **Secrets**:
+- `YT_API_KEY`: your YouTube Data API v3 key
+- `PARTY_PASSWORD`: any password you like
+
+Without the password the TV falls back to free public search mirrors, which are slower and less reliable. Searches through the Worker are cached for a day to save the free YouTube quota (about 100 new searches a day).
 
 ## Good to know
 - **The big-screen tab must stay open.** It holds the queue, which is also saved in that browser, so a refresh keeps it.
