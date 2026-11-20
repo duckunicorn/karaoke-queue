@@ -69,7 +69,16 @@ window.KQ = (() => {
     return { status: 'unknown', title: '', channel: '' }; // couldn't tell; let it through
   }
 
-  const BLOCKED_MSG = "That video's owner blocks it from playing on other sites, so it can't play on the big screen. Pick a different version (Sing King and KaraFun uploads usually work).";
+  const BLOCKED_MSG = "That video's owner blocks it from playing on other sites, so it can't play on the big screen. Pick a different version. Zoom Karaoke, Atomic Karaoke and Party Tyme uploads work; Sing King and KaraFun don't.";
+
+  // Big karaoke channels that block playback on other sites (checked Nov 2026).
+  // The Find button leaves them out of the YouTube search.
+  const BLOCKED_CHANNELS = ['sing king', 'karafun'];
+  function youtubeSearchUrl(text) {
+    let q = /karaoke/i.test(text) ? text : text + ' karaoke';
+    for (const c of BLOCKED_CHANNELS) q += c.includes(' ') ? ` -"${c}"` : ` -${c}`;
+    return 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q);
+  }
   const MISSING_MSG = "That video is private, deleted or doesn't exist.";
 
   function thumb(id) {
@@ -98,5 +107,5 @@ window.KQ = (() => {
     setTimeout(() => { el.classList.remove('in'); setTimeout(() => el.remove(), 400); }, ms);
   }
 
-  return { PEER_PREFIX, LS, newCode, uid, esc, clean, ytId, thumb, qrSvg, toast, checkVideo, BLOCKED_MSG, MISSING_MSG };
+  return { PEER_PREFIX, LS, newCode, uid, esc, clean, ytId, thumb, qrSvg, toast, checkVideo, BLOCKED_MSG, MISSING_MSG, youtubeSearchUrl };
 })();

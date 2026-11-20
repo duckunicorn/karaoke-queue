@@ -200,7 +200,7 @@
       const info = await KQ.checkVideo(id);
       if (info.status === 'missing') { $('#results').innerHTML = ''; toast(KQ.MISSING_MSG, 5000); return; }
       renderResults([{ videoId: id, title: info.title || 'YouTube video', channel: info.channel, blocked: info.status === 'blocked' }]);
-      if (info.status === 'blocked') $('#hint').innerHTML = "❌ That video can't play on the big screen because its owner blocks it on other sites. Search YouTube again and pick another upload. <b>Sing King</b> and <b>KaraFun</b> versions usually work.";
+      if (info.status === 'blocked') $('#hint').innerHTML = "❌ That video can't play on the big screen because its owner blocks it on other sites. Tap <b>Find</b> to search again and pick another upload. <b>Zoom Karaoke</b>, <b>Atomic Karaoke</b> and <b>Party Tyme</b> versions work. Sing King and KaraFun don't.";
       return;
     }
     if (state && state.search) {
@@ -209,10 +209,10 @@
       $('#q').blur();
       send({ type: 'search', q: text, reqId: lastReq });
     } else {
-      window.open('https://www.youtube.com/results?search_query=' + encodeURIComponent(/karaoke/i.test(text) ? text : text + ' karaoke'), '_blank');
+      window.open(KQ.youtubeSearchUrl(text), '_blank');
       $('#q').value = '';
       updateGoBtn();
-      $('#hint').innerHTML = 'On YouTube, pick a karaoke video (<b>Sing King</b> or <b>KaraFun</b> uploads work best), tap <b>Share → Copy link</b>, then come back and paste it in the box above.';
+      $('#hint').innerHTML = 'On YouTube, pick a karaoke video, tap <b>Share → Copy link</b>, then come back and paste it in the box above. (Sing King and KaraFun videos are hidden from that search because they can\'t play on the big screen.)';
     }
   });
 
