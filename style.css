@@ -1,0 +1,54 @@
+:root {
+  --bg: #0e0b16;
+  --panel: #18131f;
+  --panel2: #221b2e;
+  --line: #312744;
+  --text: #f7f2ff;
+  --muted: #a99fbe;
+  --accent: #ff4f8b;
+  --accent2: #ffc94d;
+  --ok: #3ddc97;
+  --bad: #ff7a59;
+  --radius: 16px;
+  font-family: 'Bricolage Grotesque', system-ui, -apple-system, Segoe UI, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { min-height: 100vh; -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; color: inherit; }
+.muted { color: var(--muted); }
+.small { font-size: .85rem; }
+.hidden { display: none !important; }
+
+.brand { font-weight: 800; letter-spacing: -.01em; display: inline-flex; align-items: center; gap: .4em; }
+.brand .mic { color: var(--accent); }
+.eyebrow { text-transform: uppercase; letter-spacing: .14em; font-size: .75rem; font-weight: 600; color: var(--accent2); }
+
+.btn {
+  appearance: none; border: 0; cursor: pointer; border-radius: 999px;
+  background: var(--accent); color: #fff; font-weight: 600;
+  padding: .7em 1.3em; transition: transform .12s, filter .12s;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:active { transform: scale(.97); }
+.btn.ghost { background: transparent; border: 1.5px solid var(--line); color: var(--text); }
+.btn.small { padding: .45em .9em; font-size: .9rem; }
+.btn:disabled { opacity: .5; cursor: default; }
+
+input[type=text], input[type=password], input[type=number], input:not([type]) {
+  width: 100%; background: var(--panel2); border: 1.5px solid var(--line); border-radius: 12px;
+  padding: .75em .9em; outline: none; font-size: 1rem;
+}
+input:focus { border-color: var(--accent); }
+
+.status { display: inline-flex; align-items: center; gap: .45em; font-size: .85rem; color: var(--muted); }
+.status::before { content: ''; width: .55em; height: .55em; border-radius: 50%; background: var(--muted); }
+.status.ok::before { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.status.bad::before { background: var(--bad); }
+.status.connecting::before { background: var(--accent2); animation: pulse 1s infinite alternate; }
+@keyframes pulse { to { opacity: .3; } }
+
+#toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 100; pointer-events: none; width: min(92vw, 520px); }
+.toast { background: #fff; color: #140f1c; padding: .7em 1.1em; border-radius: 12px; font-weight: 600; box-shadow: 0 8px 30px rgba(0,0,0,.4); opacity: 0; transform: translateY(10px); transition: .3s; text-align: center; }
+.toast.in { opacity: 1; transform: none; }
