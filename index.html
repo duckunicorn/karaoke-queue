@@ -175,7 +175,7 @@
   <div class="eyebrow">Next up on the mic</div>
   <div id="interSinger"></div>
   <div id="interTitle"></div>
-  <div class="count">Starting in <b id="countNum">10</b></div>
+  <div class="count" id="countLine">Starting in <b id="countNum">10</b></div>
   <div class="row">
     <button class="btn" id="startNowBtn">Start now</button>
     <button class="btn ghost" id="interSkipBtn">Skip singer</button>
@@ -188,7 +188,7 @@
 
 <!-- 3b. Video can't play inside this page -->
 <section id="blockedScreen" class="screen center">
-  <div class="eyebrow">This video can't play here</div>
+  <div class="eyebrow" id="blockedEyebrow">This video can't play here</div>
   <div id="blockedSinger"></div>
   <div id="blockedTitle"></div>
   <p id="blockedMsg" class="muted"></p>
@@ -231,7 +231,7 @@
     <ul class="dq" id="drawerList"></ul>
     <div class="quickadd">
       <b>Add a song from here</b>
-      <input id="qaLink" placeholder="YouTube link">
+      <input id="qaLink" placeholder="Song and artist, or a YouTube link">
       <div class="r"><input id="qaName" placeholder="Singer name"><button class="btn small" id="qaBtn">Add</button></div>
     </div>
   </div>
@@ -242,7 +242,7 @@
     <h3>Settings</h3>
     <label for="sKey">YouTube API key (optional)</label>
     <input id="sKey" type="password" placeholder="Leave empty to use pasted links only" autocomplete="off">
-    <div class="help">With a key, guests can search for songs right on their phones. Without one, they paste YouTube links. Get a free key from the <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">Google Cloud console</a> (enable "YouTube Data API v3", then create an API key). The key stays in this browser only. The free tier is about 100 searches a day.</div>
+    <div class="help">Guests just type a song name; the TV finds a karaoke video when it's their turn. Without a key it uses free public search services, which can be slow or down. A key makes finding videos fast and reliable. Get a free key from the <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">Google Cloud console</a> (enable "YouTube Data API v3", then create an API key). The key stays in this browser only. The free tier is about 100 searches a day.</div>
     <label class="check"><input type="checkbox" id="sKaraoke"> Add "karaoke" to guest searches</label>
     <label for="sInter">Countdown between songs (seconds)</label>
     <input id="sInter" type="number" min="0" max="60">
@@ -352,7 +352,7 @@
   function handleMsg(conn, m) {
     if (!m || typeof m !== 'object') return;
     if (m.type === 'add') {
-      addSongChecked({ videoId: m.videoId, title: m.title, singer: m.singer, clientId: m.clientId })
+      addSongChecked({ videoId: m.videoId, query: m.query, title: m.title, singer: m.singer, clientId: m.clientId })
         .then(r => send(conn, { type: 'toast', text: r.message, ok: r.ok, ms: r.ok ? 3500 : 7000 }));
     } else if (m.type === 'remove') {
       const i = queue.findIndex(q => q.id === m.id && q.clientId && q.clientId === m.clientId);
@@ -364,14 +364,17 @@
     }
   }
 
-  function addSong({ videoId, title, singer, clientId }) {
+  function addSong({ videoId, query, title, singer, clientId }) {
     videoId = String(videoId || '');
-    if (!/^[\w-]{11}$/.test(videoId)) return { ok: false, message: "That doesn't look like a YouTube video." };
-    if ((now && now.videoId === videoId) || queue.some(q => q.videoId === videoId))
-      return { ok: false, message: 'That song is already in the queue.' };
+    query = clean(query, 120);
+    if (!query && !/^[\w-]{11}$/.test(videoId)) return { ok: false, message: 'Type a song name first.' };
+    const key = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const all = now ? [now, ...queue] : queue;
+    if (videoId && all.some(q => q.videoId === videoId)) return { ok: false, message: 'That song is already in the queue.' };
+    if (query && all.some(q => q.query && key(q.query) === key(query))) return { ok: false, message: 'That song is already in the queue.' };
     const item = {
-      id: KQ.uid(), videoId,
-      title: clean(title, 140) || 'YouTube video',
+      id: KQ.uid(), videoId: videoId || null, query: query || null, tried: [],
+      title: clean(title, 140) || query || 'YouTube video',
       singer: clean(singer, 40) || 'Someone',
       clientId: clean(clientId, 40), addedAt: Date.now(),
     };
@@ -379,13 +382,14 @@
     toast(`${item.singer} added “${item.title}”`);
     changed();
     const autoStart = started && phase === 'idle';
-    if (autoStart) playNext();
+    if (autoStart) playNext(); else prefetchNext();
     const ahead = queue.indexOf(item) + (now && now !== item ? 1 : 0);
     return { ok: true, message: autoStart ? "You're up first! Head to the mic 🎤" : ahead === 0 ? "Added! You're next." : `Added! ${ahead} song${ahead === 1 ? '' : 's'} ahead of you.` };
   }
 
   // Ask YouTube whether the video can play inside this page before queueing it.
   async function addSongChecked(item) {
+    if (!item.videoId) return addSong(item); // a song name: the video is found when it's their turn
     const id = String(item.videoId || '');
     if (!/^[\w-]{11}$/.test(id)) return { ok: false, message: "That doesn't look like a YouTube video." };
     if ((now && now.videoId === id) || queue.some(q => q.videoId === id)) return { ok: false, message: 'That song is already in the queue.' };
@@ -414,6 +418,97 @@
     return results;
   }
 
+  // ---------- Finding a playable karaoke video ----------
+  // Free public YouTube search mirrors (no key needed). They come and go, so several are tried.
+  const FREE_SOURCES = [
+    { kind: 'piped', base: 'https://api.piped.private.coffee' },
+    { kind: 'piped', base: 'https://pipedapi.kavin.rocks' },
+    { kind: 'piped', base: 'https://pipedapi.adminforge.de' },
+    { kind: 'piped', base: 'https://pipedapi.r4fo.com' },
+    { kind: 'invidious', base: 'https://inv.nadeko.net' },
+    { kind: 'invidious', base: 'https://invidious.nerdvpn.de' },
+    { kind: 'invidious', base: 'https://yewtu.be' },
+    { kind: 'invidious', base: 'https://invidious.f5.si' },
+  ];
+  const BLOCKED_CHANNELS = /sing ?king|karafun/i;
+  const KARAOKE_WORDS = /karaoke|instrumental|backing track|sing ?along|minus one|no vocals?/i;
+
+  async function fetchJson(url, ms = 8000) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    try {
+      const r = await fetch(url, { signal: c.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } finally { clearTimeout(t); }
+  }
+
+  async function freeSearch(q) {
+    const good = LS.get('kq-good-source', null);
+    const list = [...FREE_SOURCES].sort((a, b) => (b.base === good) - (a.base === good));
+    for (const src of list) {
+      try {
+        let items;
+        if (src.kind === 'piped') {
+          const j = await fetchJson(`${src.base}/search?filter=videos&q=${encodeURIComponent(q)}`);
+          items = (j.items || []).filter(x => /watch\?v=/.test(x.url || '')).map(x => ({
+            videoId: x.url.split('v=')[1].slice(0, 11), title: x.title || '', channel: x.uploaderName || '', duration: x.duration }));
+        } else {
+          const j = await fetchJson(`${src.base}/api/v1/search?type=video&q=${encodeURIComponent(q)}`);
+          items = (Array.isArray(j) ? j : []).filter(x => x.videoId).map(x => ({
+            videoId: x.videoId, title: x.title || '', channel: x.author || '', duration: x.lengthSeconds }));
+        }
+        if (items.length) { LS.set('kq-good-source', src.base); return items; }
+      } catch { /* try the next mirror */ }
+    }
+    throw new Error('No search service answered');
+  }
+
+  async function findCandidates(q) {
+    const query = /karaoke/i.test(q) ? q : q + ' karaoke';
+    let list = [];
+    if (settings.apiKey) { try { list = await search(query); } catch (e) { console.warn(e); } }
+    if (!list.length) list = await freeSearch(query);
+    return list
+      .filter(r => !BLOCKED_CHANNELS.test(r.channel) && !BLOCKED_CHANNELS.test(r.title))
+      .filter(r => !(r.duration > 0) || (r.duration >= 60 && r.duration <= 900))
+      .filter(r => KARAOKE_WORDS.test(r.title));
+  }
+
+  // Sets item.videoId to a karaoke video that YouTube allows to play here. Returns true/false.
+  const resolving = new Map();
+  function resolveVideo(item) {
+    if (item.videoId) return Promise.resolve(true);
+    if (resolving.has(item.id)) return resolving.get(item.id);
+    const job = (async () => {
+      const q = item.query || (item.videoTitle || '').replace(/[\(\[][^\)\]]*[\)\]]/g, ' ').replace(/karaoke|lyrics?|official|video|version/gi, ' ').trim();
+      if (!q) return false;
+      let candidates = [];
+      try { candidates = await findCandidates(q); } catch (e) { console.warn(e); item.searchFailed = true; return false; }
+      for (const c of candidates.slice(0, 10)) {
+        if ((item.tried || []).includes(c.videoId)) continue;
+        const info = await KQ.checkVideo(c.videoId);
+        if (info.status === 'ok' || info.status === 'unknown') {
+          item.videoId = c.videoId;
+          item.videoTitle = c.title;
+          save();
+          return true;
+        }
+        (item.tried = item.tried || []).push(c.videoId);
+      }
+      return false;
+    })();
+    resolving.set(item.id, job);
+    job.finally(() => resolving.delete(item.id));
+    return job;
+  }
+
+  // Look up the next singer's video in the background so it's ready in time.
+  function prefetchNext() {
+    const next = queue[0];
+    if (next && !next.videoId && !next.searchFailed) resolveVideo(next);
+  }
+
   // ---------- Playback ----------
   function playNext() {
     clearInterval(countdownTimer); clearTimeout(errorTimer); clearInterval(ytWinTimer);
@@ -424,15 +519,17 @@
       return;
     }
     now = queue.shift();
+    resolveVideo(now);
     if (settings.intermission > 0) {
       phase = 'intermission';
       if (playerReady) player.stopVideo();
       changed();
       let left = settings.intermission;
+      $('#countLine').innerHTML = 'Starting in <b id="countNum"></b>';
       $('#countNum').textContent = left;
       countdownTimer = setInterval(() => {
         left--;
-        $('#countNum').textContent = Math.max(left, 0);
+        const n = $('#countNum'); if (n) n.textContent = Math.max(left, 0);
         if (left <= 0) playNow();
       }, 1000);
     } else {
@@ -440,13 +537,22 @@
     }
   }
 
-  function playNow() {
+  async function playNow() {
     clearInterval(countdownTimer);
-    if (!now) return playNext();
+    const item = now;
+    if (!item) return playNext();
+    if (!item.videoId) {
+      if (phase !== 'intermission') { phase = 'intermission'; changed(); }
+      $('#countLine').textContent = 'Finding a karaoke video…';
+      const found = await resolveVideo(item);
+      if (now !== item) return;
+      if (!found) return showStuck(item, 'notfound');
+    }
     phase = 'playing';
     changed();
-    if (playerReady) player.loadVideoById(now.videoId);
+    if (playerReady) player.loadVideoById(item.videoId);
     dimHudSoon();
+    prefetchNext();
   }
 
   // A video refused to play inside this page (owner blocks embedding, age or region limits…).
@@ -454,34 +560,32 @@
     const item = now;
     if (!item) return;
     if (playerReady) player.stopVideo();
-    // 1) With a YouTube API key, quietly swap in another upload of the same song.
-    if (settings.apiKey && !item.altTried && item.title && item.title !== 'YouTube video') {
-      item.altTried = true;
-      toast('That upload is blocked here. Looking for another version…', 4000);
-      try {
-        const q = item.title.replace(/[\(\[][^\)\]]*[\)\]]/g, ' ').replace(/karaoke|lyrics?|official|video|instrumental/gi, ' ').replace(/\s+/g, ' ').trim();
-        const results = await search(q + ' karaoke');
-        for (const r of results) {
-          if (r.videoId === item.videoId) continue;
-          const info = await KQ.checkVideo(r.videoId);
-          if (info.status !== 'ok' && info.status !== 'unknown') continue;
-          if (now !== item || phase !== 'playing') return; // host moved on meanwhile
-          item.videoId = r.videoId;
-          item.title = r.title;
-          changed();
-          toast(`Playing a different version: “${r.title}”`, 5000);
-          if (playerReady) player.loadVideoById(r.videoId);
-          return;
-        }
-      } catch (err) { console.warn(err); }
+    item.tried = item.tried || [];
+    if (item.videoId) item.tried.push(item.videoId);
+    if (!item.query && !item.videoTitle && item.title !== 'YouTube video') item.videoTitle = item.title;
+    if (item.tried.length <= 5 && (item.query || item.videoTitle)) {
+      toast("That video won't play here. Finding another version…", 4000);
+      item.videoId = null;
+      const found = await resolveVideo(item);
+      if (now !== item || phase !== 'playing') return; // host moved on meanwhile
+      if (found) { changed(); if (playerReady) player.loadVideoById(item.videoId); return; }
     }
     if (now !== item || phase !== 'playing') return;
-    // 2) Otherwise let the host open it on YouTube, or skip after a countdown.
+    showStuck(item, 'blocked');
+  }
+
+  // Couldn't play anything for this singer: offer YouTube, or skip after a countdown.
+  function showStuck(item, reason) {
     phase = 'blocked';
     changed();
-    broadcastToast(`Your song “${item.title}” can't play on the big screen. Try adding a different version.`, item.clientId);
+    const notFound = reason === 'notfound';
+    $('#blockedEyebrow').textContent = notFound ? "Couldn't find a karaoke video" : "This video can't play here";
+    const why = notFound
+      ? (item.searchFailed ? "The song search isn't answering right now (adding a YouTube API key in Settings fixes this)." : "No karaoke version that can play here turned up.")
+      : "YouTube won't let these videos play inside other sites.";
+    broadcastToast(`Sorry, the TV couldn't find a playable karaoke version of “${item.title}”. Try adding it again with the artist name.`, item.clientId);
     let left = 20;
-    const msg = () => $('#blockedMsg').textContent = `YouTube won't let this video play inside other sites. Open it on YouTube instead, or it'll skip in ${left}s.`;
+    const msg = () => $('#blockedMsg').textContent = `${why} Open it on YouTube instead, or it'll skip in ${left}s.`;
     msg();
     clearInterval(countdownTimer);
     countdownTimer = setInterval(() => { left--; if (left <= 0) playNext(); else msg(); }, 1000);
@@ -490,9 +594,11 @@
   function openOnYouTube() {
     if (!now) return;
     clearInterval(countdownTimer);
-    ytWin = window.open('https://www.youtube.com/watch?v=' + now.videoId + '&autoplay=1', 'kq-youtube');
+    const lastTried = (now.tried || []).slice(-1)[0];
+    const url = now.videoId || lastTried ? 'https://www.youtube.com/watch?v=' + (now.videoId || lastTried) + '&autoplay=1' : KQ.youtubeSearchUrl(now.query || now.title);
+    ytWin = window.open(url, 'kq-youtube');
     if (!ytWin) { toast('Your browser blocked the new window. Allow pop-ups for this site and try again.', 6000); return; }
-    $('#blockedMsg').textContent = 'Playing on YouTube in another window. Close that window when the song ends and the next singer comes up automatically.';
+    $('#blockedMsg').textContent = 'Opened YouTube in another window. Close that window when the song ends and the next singer comes up automatically.';
     $('#openYtBtn').textContent = '▶ Reopen on YouTube';
     clearInterval(ytWinTimer);
     const item = now;
@@ -570,7 +676,7 @@
 
   function drawerRow(q, isNow) {
     return `<li class="${isNow ? 'now' : ''}" data-id="${esc(q.id)}">
-      <img src="${KQ.thumb(q.videoId)}" alt="">
+      ${q.videoId ? `<img src="${KQ.thumb(q.videoId)}" alt="">` : '<div style="width:72px;height:40px;border-radius:6px;background:var(--bg);display:grid;place-items:center">🎤</div>'}
       <div class="who"><b>${isNow ? '▶ ' : ''}${esc(q.singer)}</b><span>${esc(q.title)}</span></div>
       <div class="acts">${isNow ? '' : `
         <button class="icon" data-act="play" title="Play now">▶</button>
@@ -618,11 +724,12 @@
 
   $('#qaName').value = LS.get('kq-host-name', '');
   $('#qaBtn').onclick = async () => {
-    const id = KQ.ytId($('#qaLink').value);
-    if (!id) return toast('Paste a YouTube link first.');
+    const text = $('#qaLink').value.trim();
+    if (!text) return toast('Type a song name first.');
+    const id = KQ.ytId(text);
     const name = $('#qaName').value.trim() || 'Host';
     LS.set('kq-host-name', name);
-    const r = await addSongChecked({ videoId: id, title: 'YouTube video', singer: name, clientId: 'host' });
+    const r = await addSongChecked(id ? { videoId: id, title: 'YouTube video', singer: name, clientId: 'host' } : { query: text, title: text, singer: name, clientId: 'host' });
     if (r.ok) $('#qaLink').value = ''; else toast(r.message, 7000);
   };
 

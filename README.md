@@ -1,6 +1,6 @@
 # 🎤 Karaoke Queue
 
-A karaoke queue for parties that needs no server. Put `index.html` on the TV. Guests scan the QR code, add YouTube karaoke videos from their phones, and each song plays automatically when the one before it ends.
+A karaoke queue for parties that needs no server. Put `index.html` on the TV. Guests scan the QR code and type the songs they want to sing. The TV finds a karaoke video for each one and plays them in order.
 
 ## Put it on GitHub Pages (about 2 minutes)
 
@@ -13,10 +13,8 @@ A karaoke queue for parties that needs no server. Put `index.html` on the TV. Gu
 
 1. On the computer connected to the TV, open `https://YOUR-USERNAME.github.io/karaoke/` and click **Start the party**. The click is required so the browser allows sound.
 2. Guests scan the QR code, or go to `.../join.html` and type the 4-letter room code.
-3. Guests enter their name and add a song:
-   - **Without an API key (default):** they type a song and tap **Find**, which opens a YouTube search. They copy the video link, paste it back in, and tap **Add**.
-   - **With an API key:** they search and tap **Add** without leaving the page. See below.
-4. Before each song, a "Next up on the mic" screen with a countdown shows who's singing. The singer's phone also buzzes.
+3. Guests enter their name and type a song and artist, like *Dancing Queen ABBA*, then tap **Add**. Pasting a YouTube link works too.
+4. When it's their turn, the TV searches YouTube for a karaoke version that's allowed to play on other sites, skipping channels that block it, like Sing King and KaraFun. If the video still won't play, it tries the next result. Before each song, a "Next up on the mic" screen with a countdown shows who's singing, and the singer's phone buzzes.
 
 ### Host controls (move the mouse to show them)
 | Key | Action |
@@ -28,15 +26,16 @@ A karaoke queue for parties that needs no server. Put `index.html` on the TV. Gu
 
 **⚙ Settings** has the countdown length, the YouTube API key, a new room code option and a "clear queue" button.
 
-## Optional: in-app song search
+## Recommended: add a YouTube API key
+Without a key, the TV finds videos through free public YouTube search mirrors. They work, but they can be slow or go down. A free key makes finding videos fast and reliable:
 1. Go to the [Google Cloud console](https://console.cloud.google.com/), create a project, and enable **YouTube Data API v3**.
 2. Under **Credentials**, choose **Create credentials → API key**. It's best to restrict the key to the YouTube Data API.
-3. On the big screen, open **⚙ Settings** and paste the key. It's stored only in that browser and is never sent to phones; searches run on the TV's browser.
+3. On the big screen, open **⚙ Settings** and paste the key. It's stored only in that browser.
 
-The free quota allows roughly 100 searches a day. Search results only include videos that allow embedding.
+The free quota allows roughly 100 song lookups a day.
 
 ## Good to know
 - **The big-screen tab must stay open.** It holds the queue, which is also saved in that browser, so a refresh keeps it.
 - Phones connect directly to the TV browser over WebRTC using [PeerJS](https://peerjs.com/)'s free public connection broker. Being on the same Wi-Fi works best; cellular usually works too.
-- **Blocked videos:** some YouTube owners turn off playback on other sites. The site checks every link before it's added, and a blocked one is refused on the guest's phone with a request to pick another version. If a video still fails at play time (age or region limits), the TV finds another version automatically when you've added an API key. Otherwise it shows **Open on YouTube** (plays it in a new window; close the window when the song ends to continue) and **Skip**. Note that **Sing King and KaraFun block this**, so the Find button leaves them out of the YouTube search. Zoom Karaoke, Atomic Karaoke, Party Tyme, Easy Karaoke and most smaller karaoke channels work.
+- **Blocked videos:** many YouTube uploads, including all Sing King and KaraFun videos, can't play on other sites. The TV only picks videos YouTube says are allowed, and if one still fails (age or region limits) it moves on to the next result. If nothing works, it shows **Open on YouTube** and **Skip**.
 - Opening `index.html` straight from your computer (`file://`) won't produce a working QR code. Use the GitHub Pages URL.
