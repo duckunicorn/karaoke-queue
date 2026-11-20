@@ -24,7 +24,8 @@
       var(--bg); }
   body[data-phase=start] #startScreen,
   body[data-phase=idle] #idleScreen,
-  body[data-phase=intermission] #interScreen { display: flex; }
+  body[data-phase=intermission] #interScreen,
+  body[data-phase=blocked] #blockedScreen { display: flex; }
   body[data-phase=playing] #hud { display: flex; }
 
   .center { flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 1.2rem; padding: 4vw; }
@@ -75,6 +76,12 @@
   .corner-qr div.txt { font-size: clamp(.9rem, 1.3vw, 1.2rem); color: var(--muted); }
   .corner-qr b { color: var(--accent2); letter-spacing: .1em; }
 
+  /* Fallback when a video refuses to play here */
+  #blockedScreen .eyebrow { color: var(--bad); font-size: clamp(1rem, 1.6vw, 1.5rem); }
+  #blockedSinger { font-size: clamp(2.5rem, 7vw, 7rem); font-weight: 800; letter-spacing: -.03em; line-height: 1; }
+  #blockedTitle { font-size: clamp(1.1rem, 2.2vw, 2rem); color: var(--muted); max-width: 80vw; }
+  #blockedMsg { font-size: clamp(1rem, 1.6vw, 1.4rem); max-width: 50rem; }
+
   /* HUD over the video (kept at the top so lyrics stay visible) */
   #hud { position: fixed; top: 0; left: 0; right: 0; z-index: 6; display: none; justify-content: space-between; align-items: flex-start; padding: 2vh 2vw; pointer-events: none; }
   .hud-card { background: rgba(14,11,22,.78); backdrop-filter: blur(6px); border-radius: 16px; padding: .8rem 1.1rem; max-width: 40vw; }
@@ -92,7 +99,7 @@
 
   /* Host controls */
   #controls { position: fixed; left: 50%; bottom: 2.5vh; transform: translate(-50%, 20px); z-index: 20; display: flex; gap: .5rem; padding: .5rem; border-radius: 999px; background: rgba(24,19,31,.92); border: 1px solid var(--line); opacity: 0; pointer-events: none; transition: .25s; }
-  body.show-controls #controls, body[data-phase=idle] #controls, body[data-phase=intermission] #controls { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+  body.show-controls #controls, body[data-phase=idle] #controls, body[data-phase=intermission] #controls, body[data-phase=blocked] #controls { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
   body[data-phase=start] #controls { display: none; }
   #controls .btn { background: transparent; padding: .55em 1em; font-weight: 600; font-size: .95rem; }
   #controls .btn:hover { background: var(--panel2); }
@@ -179,6 +186,22 @@
   </div>
 </section>
 
+<!-- 3b. Video can't play inside this page -->
+<section id="blockedScreen" class="screen center">
+  <div class="eyebrow">This video can't play here</div>
+  <div id="blockedSinger"></div>
+  <div id="blockedTitle"></div>
+  <p id="blockedMsg" class="muted"></p>
+  <div class="row">
+    <button class="btn" id="openYtBtn">▶ Open on YouTube</button>
+    <button class="btn ghost" id="blockedSkipBtn">Skip to next song</button>
+  </div>
+  <div class="corner-qr">
+    <div class="txt">Add a song<br>Room <b class="roomCode"></b></div>
+    <div class="qr" id="qrBlocked"></div>
+  </div>
+</section>
+
 <!-- 4. Overlay while a song plays -->
 <div id="hud">
   <div class="hud-card hud-now">
@@ -252,6 +275,7 @@
   let peer = null, idRetries = 0, restartTimer = null, peerOnline = false;
   const conns = new Set();
   let player = null, playerReady = false, countdownTimer = null, errorTimer = null;
+  let ytWin = null, ytWinTimer = null;
   const searchCache = new Map();
 
   function save() { LS.set('kq-queue', queue); LS.set('kq-now', now); }
@@ -316,7 +340,7 @@
 
   function pub(q) { return { id: q.id, videoId: q.videoId, title: q.title, singer: q.singer, clientId: q.clientId }; }
   function publicState() {
-    return { type: 'state', room, phase: started ? phase : 'waiting', now: now ? pub(now) : null, queue: queue.map(pub), search: !!settings.apiKey };
+    return { type: 'state', room, phase: !started ? 'waiting' : phase === 'blocked' ? 'playing' : phase, now: now ? pub(now) : null, queue: queue.map(pub), search: !!settings.apiKey };
   }
 
   function updateGuestStatus() {
@@ -328,8 +352,8 @@
   function handleMsg(conn, m) {
     if (!m || typeof m !== 'object') return;
     if (m.type === 'add') {
-      const r = addSong({ videoId: m.videoId, title: m.title, singer: m.singer, clientId: m.clientId });
-      send(conn, { type: 'toast', text: r.message, ok: r.ok });
+      addSongChecked({ videoId: m.videoId, title: m.title, singer: m.singer, clientId: m.clientId })
+        .then(r => send(conn, { type: 'toast', text: r.message, ok: r.ok, ms: r.ok ? 3500 : 7000 }));
     } else if (m.type === 'remove') {
       const i = queue.findIndex(q => q.id === m.id && q.clientId && q.clientId === m.clientId);
       if (i >= 0) { queue.splice(i, 1); changed(); send(conn, { type: 'toast', text: 'Removed from the queue.' }); }
@@ -360,6 +384,17 @@
     return { ok: true, message: autoStart ? "You're up first! Head to the mic 🎤" : ahead === 0 ? "Added! You're next." : `Added! ${ahead} song${ahead === 1 ? '' : 's'} ahead of you.` };
   }
 
+  // Ask YouTube whether the video can play inside this page before queueing it.
+  async function addSongChecked(item) {
+    const id = String(item.videoId || '');
+    if (!/^[\w-]{11}$/.test(id)) return { ok: false, message: "That doesn't look like a YouTube video." };
+    if ((now && now.videoId === id) || queue.some(q => q.videoId === id)) return { ok: false, message: 'That song is already in the queue.' };
+    const info = await KQ.checkVideo(id);
+    if (info.status === 'blocked') return { ok: false, message: KQ.BLOCKED_MSG };
+    if (info.status === 'missing') return { ok: false, message: KQ.MISSING_MSG };
+    return addSong({ ...item, title: info.title || item.title });
+  }
+
   async function search(q) {
     if (!settings.apiKey) throw new Error('Search is off. Paste a YouTube link instead.');
     if (!q) return [];
@@ -381,7 +416,7 @@
 
   // ---------- Playback ----------
   function playNext() {
-    clearInterval(countdownTimer); clearTimeout(errorTimer);
+    clearInterval(countdownTimer); clearTimeout(errorTimer); clearInterval(ytWinTimer);
     if (!queue.length) {
       now = null; phase = 'idle';
       if (playerReady) player.stopVideo();
@@ -414,6 +449,60 @@
     dimHudSoon();
   }
 
+  // A video refused to play inside this page (owner blocks embedding, age or region limits…).
+  async function handlePlayError(code) {
+    const item = now;
+    if (!item) return;
+    if (playerReady) player.stopVideo();
+    // 1) With a YouTube API key, quietly swap in another upload of the same song.
+    if (settings.apiKey && !item.altTried && item.title && item.title !== 'YouTube video') {
+      item.altTried = true;
+      toast('That upload is blocked here. Looking for another version…', 4000);
+      try {
+        const q = item.title.replace(/[\(\[][^\)\]]*[\)\]]/g, ' ').replace(/karaoke|lyrics?|official|video|instrumental/gi, ' ').replace(/\s+/g, ' ').trim();
+        const results = await search(q + ' karaoke');
+        for (const r of results) {
+          if (r.videoId === item.videoId) continue;
+          const info = await KQ.checkVideo(r.videoId);
+          if (info.status !== 'ok' && info.status !== 'unknown') continue;
+          if (now !== item || phase !== 'playing') return; // host moved on meanwhile
+          item.videoId = r.videoId;
+          item.title = r.title;
+          changed();
+          toast(`Playing a different version: “${r.title}”`, 5000);
+          if (playerReady) player.loadVideoById(r.videoId);
+          return;
+        }
+      } catch (err) { console.warn(err); }
+    }
+    if (now !== item || phase !== 'playing') return;
+    // 2) Otherwise let the host open it on YouTube, or skip after a countdown.
+    phase = 'blocked';
+    changed();
+    broadcastToast(`Your song “${item.title}” can't play on the big screen. Try adding a different version.`, item.clientId);
+    let left = 20;
+    const msg = () => $('#blockedMsg').textContent = `YouTube won't let this video play inside other sites. Open it on YouTube instead, or it'll skip in ${left}s.`;
+    msg();
+    clearInterval(countdownTimer);
+    countdownTimer = setInterval(() => { left--; if (left <= 0) playNext(); else msg(); }, 1000);
+  }
+
+  function openOnYouTube() {
+    if (!now) return;
+    clearInterval(countdownTimer);
+    ytWin = window.open('https://www.youtube.com/watch?v=' + now.videoId + '&autoplay=1', 'kq-youtube');
+    if (!ytWin) { toast('Your browser blocked the new window. Allow pop-ups for this site and try again.', 6000); return; }
+    $('#blockedMsg').textContent = 'Playing on YouTube in another window. Close that window when the song ends and the next singer comes up automatically.';
+    $('#openYtBtn').textContent = '▶ Reopen on YouTube';
+    clearInterval(ytWinTimer);
+    const item = now;
+    ytWinTimer = setInterval(() => {
+      if (ytWin && ytWin.closed) { clearInterval(ytWinTimer); if (now === item && phase === 'blocked') playNext(); }
+    }, 1000);
+  }
+
+  function broadcastToast(text, to) { for (const c of conns) send(c, { type: 'toast', text, to, ms: 7000 }); }
+
   let dimTimer;
   function dimHudSoon() { $('#hud').classList.remove('dim'); clearTimeout(dimTimer); dimTimer = setTimeout(() => $('#hud').classList.add('dim'), 12000); }
 
@@ -431,12 +520,7 @@
           }
           $('#pauseBtn').textContent = e.data === YT.PlayerState.PAUSED ? '▶ Play' : '⏯ Pause';
         },
-        onError: () => {
-          if (phase !== 'playing') return;
-          toast(`Can't play “${now ? now.title : 'this video'}” here (the uploader blocks embedding). Skipping…`, 4500);
-          clearTimeout(errorTimer);
-          errorTimer = setTimeout(() => { if (phase === 'playing') playNext(); }, 4000);
-        },
+        onError: e => { if (phase === 'playing') handlePlayError(e.data); },
       },
     });
   };
@@ -450,7 +534,7 @@
   function renderJoin() {
     const url = joinUrl();
     const svg = KQ.qrSvg(url);
-    for (const id of ['#qrBig', '#qrSmall', '#qrInter', '#qrStart']) $(id).innerHTML = svg;
+    for (const id of ['#qrBig', '#qrSmall', '#qrInter', '#qrStart', '#qrBlocked']) $(id).innerHTML = svg;
     $('#joinUrl').textContent = url.replace(/^https?:\/\//, '');
     document.querySelectorAll('.roomCode').forEach(el => el.textContent = room);
   }
@@ -468,6 +552,9 @@
       $('#interSinger').textContent = now.singer;
       $('#interTitle').textContent = now.title;
       $('#hudSinger').textContent = now.singer;
+      $('#blockedSinger').textContent = now.singer;
+      $('#blockedTitle').textContent = now.title;
+      if (phase !== 'blocked') $('#openYtBtn').textContent = '▶ Open on YouTube';
       $('#hudTitle').textContent = now.title;
     }
     const next = queue[0];
@@ -502,6 +589,8 @@
   $('#skipBtn').onclick = () => playNext();
   $('#interSkipBtn').onclick = () => playNext();
   $('#startNowBtn').onclick = () => playNow();
+  $('#openYtBtn').onclick = openOnYouTube;
+  $('#blockedSkipBtn').onclick = () => playNext();
   $('#pauseBtn').onclick = togglePause;
   $('#fsBtn').onclick = toggleFs;
   $('#queueBtn').onclick = () => document.body.classList.toggle('drawer-open');
@@ -533,10 +622,8 @@
     if (!id) return toast('Paste a YouTube link first.');
     const name = $('#qaName').value.trim() || 'Host';
     LS.set('kq-host-name', name);
-    let title = 'YouTube video';
-    try { const j = await (await fetch('https://noembed.com/embed?url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id))).json(); if (j.title) title = j.title; } catch {}
-    const r = addSong({ videoId: id, title, singer: name, clientId: 'host' });
-    if (r.ok) $('#qaLink').value = ''; else toast(r.message);
+    const r = await addSongChecked({ videoId: id, title: 'YouTube video', singer: name, clientId: 'host' });
+    if (r.ok) $('#qaLink').value = ''; else toast(r.message, 7000);
   };
 
   // Settings

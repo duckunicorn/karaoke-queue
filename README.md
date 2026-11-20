@@ -38,5 +38,5 @@ The free quota allows roughly 100 searches a day. Search results only include vi
 ## Good to know
 - **The big-screen tab must stay open.** It holds the queue, which is also saved in that browser, so a refresh keeps it.
 - Phones connect directly to the TV browser over WebRTC using [PeerJS](https://peerjs.com/)'s free public connection broker. Being on the same Wi-Fi works best; cellular usually works too.
-- Some YouTube videos block playing on other sites. Those are skipped automatically with a message. Channels like Sing King and KaraFun generally allow it.
+- **Blocked videos:** some YouTube owners turn off playback on other sites. The site checks every link before it's added, and a blocked one is refused on the guest's phone with a request to pick another version. If a video still fails at play time (age or region limits), the TV finds another version automatically when you've added an API key. Otherwise it shows **Open on YouTube** (plays it in a new window; close the window when the song ends to continue) and **Skip**. Sing King and KaraFun uploads almost always work.
 - Opening `index.html` straight from your computer (`file://`) won't produce a working QR code. Use the GitHub Pages URL.

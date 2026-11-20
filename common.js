@@ -49,6 +49,29 @@ window.KQ = (() => {
     return null;
   }
 
+  // Ask YouTube whether a video can play inside another site.
+  // YouTube's oEmbed answers 401/403 when the owner has turned embedding off,
+  // and 400/404 when the video is private, deleted or doesn't exist.
+  async function checkVideo(id) {
+    const watch = 'https://www.youtube.com/watch?v=' + id;
+    try {
+      const r = await fetch('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(watch));
+      if (r.status === 401 || r.status === 403) return { status: 'blocked' };
+      if (r.status === 400 || r.status === 404) return { status: 'missing' };
+      if (r.ok) { const j = await r.json(); return { status: 'ok', title: j.title || '', channel: j.author_name || '' }; }
+    } catch { /* network hiccup: fall through to the backup lookup */ }
+    try {
+      const j = await (await fetch('https://noembed.com/embed?url=' + encodeURIComponent(watch))).json();
+      if (j.title) return { status: 'ok', title: j.title, channel: j.author_name || '' };
+      if (/401|403/.test(j.error || '')) return { status: 'blocked' };
+      if (/400|404/.test(j.error || '')) return { status: 'missing' };
+    } catch {}
+    return { status: 'unknown', title: '', channel: '' }; // couldn't tell; let it through
+  }
+
+  const BLOCKED_MSG = "That video's owner blocks it from playing on other sites, so it can't play on the big screen. Pick a different version (Sing King and KaraFun uploads usually work).";
+  const MISSING_MSG = "That video is private, deleted or doesn't exist.";
+
   function thumb(id) {
     return `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
   }
@@ -75,5 +98,5 @@ window.KQ = (() => {
     setTimeout(() => { el.classList.remove('in'); setTimeout(() => el.remove(), 400); }, ms);
   }
 
-  return { PEER_PREFIX, LS, newCode, uid, esc, clean, ytId, thumb, qrSvg, toast };
+  return { PEER_PREFIX, LS, newCode, uid, esc, clean, ytId, thumb, qrSvg, toast, checkVideo, BLOCKED_MSG, MISSING_MSG };
 })();
