@@ -32,6 +32,12 @@
   /* Start */
   #startScreen h1 { font-size: clamp(2.5rem, 6vw, 5rem); margin: 0; letter-spacing: -.03em; line-height: 1; }
   #startScreen p { max-width: 36rem; font-size: 1.2rem; margin: 0; }
+  #startScreen { flex-direction: row; gap: 6vw; }
+  .start-main { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; max-width: 40rem; }
+  .start-join { display: flex; flex-direction: column; align-items: center; gap: .8rem; }
+  #qrStart { width: min(42vh, 36vw); }
+  .start-join .roomcode b { color: var(--accent2); }
+  @media (max-width: 760px) { #startScreen { flex-direction: column-reverse; overflow-y: auto; justify-content: flex-start; } #qrStart { width: min(70vw, 300px); } }
   .btn.big { font-size: 1.4rem; padding: .9em 2em; margin-top: .5rem; }
 
   /* Idle: QR + queue */
@@ -129,11 +135,17 @@
 
 <!-- 1. Start screen (a click is needed so the browser allows sound) -->
 <section id="startScreen" class="screen center">
-  <div class="brand" style="font-size:1.4rem"><span class="mic">🎤</span> Karaoke Queue</div>
-  <h1>Big screen</h1>
-  <p class="muted">Put this on the TV and click start. Guests scan the QR code with their phones to add songs, and each song plays when the last one ends.</p>
-  <button class="btn big" id="startBtn">Start the party</button>
-  <span class="status connecting" id="startStatus">Opening room…</span>
+  <div class="start-main">
+    <div class="brand" style="font-size:1.4rem"><span class="mic">🎤</span> Karaoke Queue</div>
+    <h1>Big screen</h1>
+    <p class="muted">Put this on the TV and click start. Guests can scan the QR code now to start adding songs. Each song plays when the last one ends.</p>
+    <button class="btn big" id="startBtn">Start the party</button>
+    <span class="status connecting" id="startStatus">Opening room…</span>
+  </div>
+  <div class="start-join">
+    <div class="qr" id="qrStart"></div>
+    <div class="roomcode">Scan to join · Room <b class="roomCode"></b></div>
+  </div>
 </section>
 
 <!-- 2. Idle: nothing playing -->
@@ -438,7 +450,7 @@
   function renderJoin() {
     const url = joinUrl();
     const svg = KQ.qrSvg(url);
-    for (const id of ['#qrBig', '#qrSmall', '#qrInter']) $(id).innerHTML = svg;
+    for (const id of ['#qrBig', '#qrSmall', '#qrInter', '#qrStart']) $(id).innerHTML = svg;
     $('#joinUrl').textContent = url.replace(/^https?:\/\//, '');
     document.querySelectorAll('.roomCode').forEach(el => el.textContent = room);
   }
